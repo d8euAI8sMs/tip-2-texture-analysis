@@ -107,6 +107,13 @@ namespace model
     /*                     algo                          */
     /*****************************************************/
 
+    inline std::string & trim(std::string & s)
+    {
+        while (!s.empty() && std::isspace(s[0])) s = s.substr(1);
+        while (!s.empty() && std::isspace(s[s.length() - 1])) s = s.substr(0, s.length() - 1);
+        return s;
+    }
+
     class segmentation_helper
     {
     public:
@@ -217,7 +224,7 @@ namespace model
             cv::Mat labels;
             double r = cv::kmeans(samples, cfg.kmeans_clusters, labels,
                                   cv::TermCriteria(CV_TERMCRIT_EPS | CV_TERMCRIT_ITER, 1000, 0.01),
-                                  20, cv::KMEANS_RANDOM_CENTERS);
+                                  20, cv::KMEANS_PP_CENTERS);
 
             cv::Mat flatfeats;
             pca(samples, flatfeats);
@@ -254,6 +261,123 @@ namespace model
                                        .colRange(c * cfg.wnd_size, (c + 1) * cfg.wnd_size);
 
                     int cluster = labels.at < int > (r * wcc + c, 0);
+                    wnd.setTo(cluster_colors[cluster]);
+                }
+                mask.mat = mask.mat.rowRange(cfg.wnd_size / 2, src.mat.rows - cfg.wnd_size / 2)
+                                   .colRange(cfg.wnd_size / 2, src.mat.cols - cfg.wnd_size / 2);
+            }
+
+            double alpha = 0.6;
+
+            cv::Mat foremask = mask.mat * alpha;
+            cv::Mat background = src.mat.rowRange(cfg.wnd_size / 2, src.mat.rows - cfg.wnd_size / 2)
+                                        .colRange(cfg.wnd_size / 2, src.mat.cols - cfg.wnd_size / 2);
+            background = background.clone();
+            background *= 1 - alpha;
+            cv::cvtColor(background, background, CV_GRAY2BGR);
+
+            dst.mat = background + foremask;
+        }
+        void train_knearest(const std::vector < std::pair < int, cv::Mat > > & trainset,
+                            cv::ml::KNearest & out, const autoconfig & cfg) const
+        {
+            out.setDefaultK(cfg.kmeans_clusters);
+            out.setIsClassifier(true);
+
+            size_t num_of_features = get_features_size(cfg, feature_local);
+
+            cv::Mat input(trainset.size(), num_of_features, CV_32F);
+            cv::Mat output = cv::Mat::zeros(trainset.size(), 1, CV_32S);
+            size_t sample_idx = 0, class_idx = 0;
+            for (auto it = trainset.begin(); it != trainset.end(); ++it, ++sample_idx)
+            {
+                collect_local_features(0, 0, it->second, input.row(sample_idx), cfg);
+                output.at < int > (sample_idx) = it->first;
+            }
+
+            cv::Mat var_type(num_of_features + 1, 1, CV_8UC1);
+            var_type.setTo(cv::Scalar::all(cv::ml::VAR_ORDERED));
+            var_type.at<uchar>(num_of_features) = cv::ml::VAR_CATEGORICAL;
+
+            out.train(cv::ml::TrainData::create(
+                input, cv::ml::SampleTypes::ROW_SAMPLE,
+                output, cv::noArray(), cv::noArray(), cv::noArray(), var_type));
+        }
+        void knearest_process(const bitmap & src, const cv::ml::KNearest & classifier, bitmap & featmap, bitmap & mask, bitmap & dst, const autoconfig & cfg) const
+        {
+            size_t wrc = src.mat.rows / cfg.wnd_size;
+            size_t wcc = src.mat.cols / cfg.wnd_size;
+
+            cv::Mat samples(cfg.wnd_roll ?
+                            ((src.mat.rows - cfg.wnd_size) * (src.mat.cols - cfg.wnd_size)) :
+                            (wrc * wcc), get_features_size(cfg, feature_global | feature_local), CV_32F);
+            samples.setTo(0);
+            
+            if (cfg.features & feature_local)
+            {
+                if (cfg.wnd_roll)
+                {
+                    for (size_t r = 0; r < src.mat.rows - cfg.wnd_size; ++r)
+                    for (size_t c = 0; c < src.mat.cols - cfg.wnd_size; ++c)
+                    {
+                        auto wnd = src.mat.rowRange(r, r + cfg.wnd_size).colRange(c, c + cfg.wnd_size);
+
+                        collect_local_features(r, c, wnd, samples.row(r * (src.mat.cols - cfg.wnd_size) + c), cfg);
+                    }
+                }
+                else
+                {
+                    for (size_t r = 0; r < wrc; ++r)
+                    for (size_t c = 0; c < wcc; ++c)
+                    {
+                        auto wnd = src.mat.rowRange(r * cfg.wnd_size, (r + 1) * cfg.wnd_size)
+                                          .colRange(c * cfg.wnd_size, (c + 1) * cfg.wnd_size);
+
+                        collect_local_features(r, c, wnd, samples.row(r * wcc + c), cfg);
+                    }
+                }
+            }
+
+            normalize_features(samples);
+
+            cv::Mat flatfeats;
+            pca(samples, flatfeats);
+
+            cv::Mat labels;
+            double r = classifier.predict(samples, labels);
+
+            std::vector < cv::Vec3f > cluster_colors(cfg.kmeans_clusters + 1);
+            for (size_t i = 0; i < cfg.kmeans_clusters + 1; ++i)
+            {
+                cluster_colors[i][0] = rand() / (RAND_MAX + 1.0) * 0.8 + 0.1;
+                cluster_colors[i][1] = rand() / (RAND_MAX + 1.0) * 0.8 + 0.1;
+                cluster_colors[i][2] = rand() / (RAND_MAX + 1.0) * 0.8 + 0.1;
+            }
+
+            if (cfg.wnd_roll || (cfg.features & feature_global))
+            {
+                featmap.mat.create(src.mat.rows - cfg.wnd_size, src.mat.cols - cfg.wnd_size, CV_32F);
+                mask.mat.create(src.mat.rows - cfg.wnd_size, src.mat.cols - cfg.wnd_size, CV_32FC3);
+                for (size_t r = 0; r < src.mat.rows - cfg.wnd_size; ++r)
+                for (size_t c = 0; c < src.mat.cols - cfg.wnd_size; ++c)
+                {
+                    featmap.mat.at < float > (r, c) = flatfeats.at < float > (r * (src.mat.cols - cfg.wnd_size) + c, 0);
+                    int cluster = (int) std::round(labels.at < float > (r * (src.mat.cols - cfg.wnd_size) + c, 0));
+                    mask.mat.at < cv::Vec3f > (r, c) = cluster_colors[cluster];
+                }
+            }
+            else if (cfg.features & feature_local)
+            {
+                featmap.mat.create(wrc, wcc, CV_32F);
+                mask.mat.create(src.mat.size(), CV_32FC3);
+                for (size_t r = 0; r < wrc; ++r)
+                for (size_t c = 0; c < wcc; ++c)
+                {
+                    featmap.mat.at < float > (r, c) = flatfeats.at < float > (r * wcc + c);
+                    auto wnd = mask.mat.rowRange(r * cfg.wnd_size, (r + 1) * cfg.wnd_size)
+                                       .colRange(c * cfg.wnd_size, (c + 1) * cfg.wnd_size);
+
+                    int cluster = (int)std::round(labels.at < float > (r * wcc + c, 0));
                     wnd.setTo(cluster_colors[cluster]);
                 }
                 mask.mat = mask.mat.rowRange(cfg.wnd_size / 2, src.mat.rows - cfg.wnd_size / 2)

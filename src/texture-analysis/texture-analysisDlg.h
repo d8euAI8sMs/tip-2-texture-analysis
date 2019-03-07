@@ -42,4 +42,10 @@ public:
     CButton m_features[20];
     CButton m_rolling;
     afx_msg void OnBnClickedRadio2();
+    CString m_sTrainingSets;
+    afx_msg void OnBnClickedButton3();
+    void UpdateConfig();
+    std::vector < std::pair < int, std::string > > m_trainset;
+    cv::Ptr < cv::ml::KNearest > m_pKnearest;
+    afx_msg void OnBnClickedButton4();
 };

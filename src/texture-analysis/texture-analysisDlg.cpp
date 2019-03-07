@@ -14,6 +14,7 @@
 
 CTextureAnalysisDlg::CTextureAnalysisDlg(CWnd* pParent /*=NULL*/)
     : CSimulationDialog(CTextureAnalysisDlg::IDD, pParent)
+    , m_sTrainingSets(_T("sky,clouds"))
 {
     m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
     m_data.params = model::make_default_parameters();
@@ -47,6 +48,7 @@ void CTextureAnalysisDlg::DoDataExchange(CDataExchange* pDX)
     DDX_Text(pDX, IDC_EDIT4, m_cfg.gabor_thetas);
     DDX_Text(pDX, IDC_EDIT5, m_cfg.gabor_lambdas);
     DDX_Text(pDX, IDC_EDIT6, m_cfg.kmeans_clusters);
+    DDX_Text(pDX, IDC_EDIT7, m_sTrainingSets);
 }
 
 BEGIN_MESSAGE_MAP(CTextureAnalysisDlg, CSimulationDialog)
@@ -58,6 +60,8 @@ BEGIN_MESSAGE_MAP(CTextureAnalysisDlg, CSimulationDialog)
     ON_BN_CLICKED(IDC_RADIO3, &CTextureAnalysisDlg::OnBnClickedRadio2)
     ON_BN_CLICKED(IDC_RADIO4, &CTextureAnalysisDlg::OnBnClickedRadio2)
     ON_BN_CLICKED(IDC_RADIO5, &CTextureAnalysisDlg::OnBnClickedRadio2)
+    ON_BN_CLICKED(IDC_BUTTON3, &CTextureAnalysisDlg::OnBnClickedButton3)
+    ON_BN_CLICKED(IDC_BUTTON4, &CTextureAnalysisDlg::OnBnClickedButton4)
 END_MESSAGE_MAP()
 
 // CTextureAnalysisDlg message handlers
@@ -140,9 +144,10 @@ void CTextureAnalysisDlg::OnBnClickedButton1()
 }
 
 
-void CTextureAnalysisDlg::OnBnClickedButton2()
+void CTextureAnalysisDlg::UpdateConfig()
 {
     UpdateData(TRUE);
+
     m_cfg.features = 0;
     if (m_features[0].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_mean;
     if (m_features[1].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_std;
@@ -156,7 +161,58 @@ void CTextureAnalysisDlg::OnBnClickedButton2()
     if (m_features[9].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_cocorrelation;
     if (m_features[10].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_coentropy;
     if (m_features[11].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_gabor;
+    
     m_cfg.wnd_roll = (m_rolling.GetCheck() == 1);
+
+    std::wstring wtrainsets(m_sTrainingSets.GetBuffer());
+    std::string trainsets(std::begin(wtrainsets), std::end(wtrainsets));
+
+    std::vector < std::string > trainsetlist;
+
+    while (!trainsets.empty()) 
+    {
+        size_t idx = trainsets.find(',');
+        if (idx == std::string::npos)
+        {
+            if (!model::trim(trainsets).empty()) trainsetlist.push_back(trainsets);
+            break;
+        }
+        else
+        {
+            std::string trainset = model::trim(trainsets.substr(0, idx));
+            if (!trainset.empty()) trainsetlist.push_back(trainset);
+            trainsets = trainsets.substr(idx + 1);
+        }
+    }
+
+    WIN32_FIND_DATA findData;
+	HANDLE handle;
+
+    m_trainset.clear();
+
+    for (size_t i = 0; i < trainsetlist.size(); ++i)
+    {
+        auto path = "trainsets\\" + trainsetlist[i] + "\\*";
+        std::wstring wpath(std::begin(path), std::end(path));
+        CString cpath = wpath.c_str();
+        handle = FindFirstFile(cpath, &findData);
+        // skip . and ..
+        FindNextFile(handle, &findData);
+        FindNextFile(handle, &findData);
+        do {
+            std::wstring wfile = findData.cFileName;
+            std::string file(std::begin(wfile), std::end(wfile));
+            file = "trainsets\\" + trainsetlist[i] + "\\" + file;
+            m_trainset.emplace_back(i, std::move(file));
+		} while (FindNextFile(handle, &findData));
+		FindClose(handle);
+    }
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedButton2()
+{
+    UpdateConfig();
     model::segmentation_helper h(m_data.params);
     h.autoprocess(m_data.source, m_data.featmap, m_data.mask, m_data.result, m_cfg);
     m_data.mask.to_cbitmap(m_data.cmask);
@@ -172,5 +228,36 @@ void CTextureAnalysisDlg::OnBnClickedRadio2()
     m_plotCtrl.plot_layer.layers[1]->visible = (m_selectedImageCtrl[1].GetCheck() == 1);
     m_plotCtrl.plot_layer.layers[2]->visible = (m_selectedImageCtrl[2].GetCheck() == 1);
     m_plotCtrl.plot_layer.layers[3]->visible = (m_selectedImageCtrl[3].GetCheck() == 1);
+    m_plotCtrl.RedrawWindow();
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedButton3()
+{
+    UpdateConfig();
+
+    std::vector < std::pair < int, cv::Mat > > samples;
+
+    model::bitmap bmp;
+
+    for each (auto & s in m_trainset)
+    {
+        samples.emplace_back(s.first, bmp.from_file(s.second).mat);
+    }
+
+    m_pKnearest = cv::ml::KNearest::create();
+    model::segmentation_helper h(m_data.params);
+    h.train_knearest(samples, *m_pKnearest, m_cfg);
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedButton4()
+{
+    UpdateConfig();
+    model::segmentation_helper h(m_data.params);
+    h.knearest_process(m_data.source, *m_pKnearest, m_data.featmap, m_data.mask, m_data.result, m_cfg);
+    m_data.mask.to_cbitmap(m_data.cmask);
+    m_data.result.to_cbitmap(m_data.cresult);
+    m_data.featmap.to_cbitmap(m_data.cfeatmap);
     m_plotCtrl.RedrawWindow();
 }
