@@ -16,16 +16,48 @@ CTextureAnalysisDlg::CTextureAnalysisDlg(CWnd* pParent /*=NULL*/)
     : CSimulationDialog(CTextureAnalysisDlg::IDD, pParent)
 {
     m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
+    m_data.params = model::make_default_parameters();
+    m_cfg = model::segmentation_helper::make_default_config();
 }
 
 void CTextureAnalysisDlg::DoDataExchange(CDataExchange* pDX)
 {
     CSimulationDialog::DoDataExchange(pDX);
+    DDX_Control(pDX, IDC_PIC, m_plotCtrl);
+    DDX_Control(pDX, IDC_RADIO2, m_selectedImageCtrl[0]);
+    DDX_Control(pDX, IDC_RADIO3, m_selectedImageCtrl[1]);
+    DDX_Control(pDX, IDC_RADIO4, m_selectedImageCtrl[2]);
+    DDX_Control(pDX, IDC_RADIO5, m_selectedImageCtrl[3]);
+    DDX_Control(pDX, IDC_CHECK2, m_features[0]);
+    DDX_Control(pDX, IDC_CHECK3, m_features[1]);
+    DDX_Control(pDX, IDC_CHECK4, m_features[2]);
+    DDX_Control(pDX, IDC_CHECK5, m_features[3]);
+    DDX_Control(pDX, IDC_CHECK6, m_features[4]);
+    DDX_Control(pDX, IDC_CHECK8, m_features[5]);
+    DDX_Control(pDX, IDC_CHECK9, m_features[6]);
+    DDX_Control(pDX, IDC_CHECK10, m_features[7]);
+    DDX_Control(pDX, IDC_CHECK11, m_features[8]);
+    DDX_Control(pDX, IDC_CHECK12, m_features[9]);
+    DDX_Control(pDX, IDC_CHECK13, m_features[10]);
+    DDX_Control(pDX, IDC_CHECK14, m_features[11]);
+    DDX_Control(pDX, IDC_CHECK7, m_rolling);
+    DDX_Text(pDX, IDC_EDIT1, m_cfg.wnd_size);
+    DDX_Text(pDX, IDC_EDIT2, m_cfg.histo_cols);
+    DDX_Text(pDX, IDC_EDIT3, m_cfg.cooccurrence_cols);
+    DDX_Text(pDX, IDC_EDIT4, m_cfg.gabor_thetas);
+    DDX_Text(pDX, IDC_EDIT5, m_cfg.gabor_lambdas);
+    DDX_Text(pDX, IDC_EDIT6, m_cfg.kmeans_clusters);
 }
 
 BEGIN_MESSAGE_MAP(CTextureAnalysisDlg, CSimulationDialog)
     ON_WM_PAINT()
     ON_WM_QUERYDRAGICON()
+    ON_BN_CLICKED(IDC_BUTTON1, &CTextureAnalysisDlg::OnBnClickedButton1)
+    ON_BN_CLICKED(IDC_BUTTON2, &CTextureAnalysisDlg::OnBnClickedButton2)
+    ON_BN_CLICKED(IDC_RADIO2, &CTextureAnalysisDlg::OnBnClickedRadio2)
+    ON_BN_CLICKED(IDC_RADIO3, &CTextureAnalysisDlg::OnBnClickedRadio2)
+    ON_BN_CLICKED(IDC_RADIO4, &CTextureAnalysisDlg::OnBnClickedRadio2)
+    ON_BN_CLICKED(IDC_RADIO5, &CTextureAnalysisDlg::OnBnClickedRadio2)
 END_MESSAGE_MAP()
 
 // CTextureAnalysisDlg message handlers
@@ -40,6 +72,18 @@ BOOL CTextureAnalysisDlg::OnInitDialog()
     SetIcon(m_hIcon, FALSE);        // Set small icon
 
     // TODO: Add extra initialization here
+
+    m_plotCtrl.plot_layer.with(model::make_bmp_plot(m_data.csource));
+    m_plotCtrl.plot_layer.with(model::make_bmp_plot(m_data.cmask));
+    m_plotCtrl.plot_layer.with(model::make_bmp_plot(m_data.cresult));
+    m_plotCtrl.plot_layer.with(model::make_bmp_plot(m_data.cfeatmap));
+
+    m_plotCtrl.plot_layer.layers[1]->visible = false;
+    m_plotCtrl.plot_layer.layers[2]->visible = false;
+    m_plotCtrl.plot_layer.layers[3]->visible = false;
+
+    m_features[0].SetCheck(1);
+    m_selectedImageCtrl[0].SetCheck(1);
 
     return TRUE;  // return TRUE  unless you set the focus to a control
 }
@@ -78,4 +122,55 @@ void CTextureAnalysisDlg::OnPaint()
 HCURSOR CTextureAnalysisDlg::OnQueryDragIcon()
 {
     return static_cast<HCURSOR>(m_hIcon);
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedButton1()
+{
+    CFileDialog fd(TRUE, TEXT("bmp"));
+    if (fd.DoModal() == IDOK)
+    {
+        std::wstring path(fd.GetPathName().GetBuffer());
+        std::string asciipath(path.begin(), path.end());
+        m_data.source.from_file(asciipath);
+        m_data.source.to_cbitmap(m_data.csource);
+        m_plotCtrl.RedrawWindow();
+    }
+    OnBnClickedButton2();
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedButton2()
+{
+    UpdateData(TRUE);
+    m_cfg.features = 0;
+    if (m_features[0].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_mean;
+    if (m_features[1].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_std;
+    if (m_features[2].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_coords;
+    if (m_features[3].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_histo;
+    if (m_features[4].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_entropy;
+    if (m_features[5].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_cooccurrence;
+    if (m_features[6].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_coasm;
+    if (m_features[7].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_cocontrast;
+    if (m_features[8].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_cohomogenity;
+    if (m_features[9].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_cocorrelation;
+    if (m_features[10].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_coentropy;
+    if (m_features[11].GetCheck()) m_cfg.features |= model::segmentation_helper::feature_gabor;
+    m_cfg.wnd_roll = (m_rolling.GetCheck() == 1);
+    model::segmentation_helper h(m_data.params);
+    h.autoprocess(m_data.source, m_data.featmap, m_data.mask, m_data.result, m_cfg);
+    m_data.mask.to_cbitmap(m_data.cmask);
+    m_data.result.to_cbitmap(m_data.cresult);
+    m_data.featmap.to_cbitmap(m_data.cfeatmap);
+    m_plotCtrl.RedrawWindow();
+}
+
+
+void CTextureAnalysisDlg::OnBnClickedRadio2()
+{
+    m_plotCtrl.plot_layer.layers[0]->visible = (m_selectedImageCtrl[0].GetCheck() == 1);
+    m_plotCtrl.plot_layer.layers[1]->visible = (m_selectedImageCtrl[1].GetCheck() == 1);
+    m_plotCtrl.plot_layer.layers[2]->visible = (m_selectedImageCtrl[2].GetCheck() == 1);
+    m_plotCtrl.plot_layer.layers[3]->visible = (m_selectedImageCtrl[3].GetCheck() == 1);
+    m_plotCtrl.RedrawWindow();
 }
